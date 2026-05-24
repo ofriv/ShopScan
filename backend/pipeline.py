@@ -24,12 +24,13 @@ SITES = {
 
 def is_valid_result(result: ProductResult) -> bool:
     """
-    A result is valid if it has at least a title and a price.
-    We also sanity-check that the price is a positive number.
+    A result is valid if it has a title and a price that makes sense for a real product.
+    - Minimum $15 to filter out cables/stickers/tiny accessories that slipped through.
+    - Maximum $100,000 to filter out obvious parsing errors.
     """
     if not result.title or not result.price:
         return False
-    if result.price <= 0 or result.price > 100_000:
+    if result.price < 15 or result.price > 100_000:
         return False
     return True
 
