@@ -88,10 +88,12 @@ def _do_scrape(client: FirecrawlApp, url: str, prompt: str) -> dict:
     """
     result = client.scrape_url(
         url,
-        formats=["extract"],
-        extract={
-            "schema": EXTRACT_SCHEMA,
-            "prompt": prompt,
+        params={
+            "formats": ["extract"],
+            "extract": {
+                "schema": EXTRACT_SCHEMA,
+                "prompt": prompt,
+            },
         },
     )
     # scrape_url returns a ScrapeResponse (Pydantic model) in newer SDK versions,

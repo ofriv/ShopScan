@@ -17,7 +17,7 @@ google-generativeai==0.8.3
 firecrawl-py==1.5.0
 
 # Query validation and price check (OpenAI GPT-4o-mini)
-openai==1.54.0
+openai>=2.38.0
 
 # Utilities
 python-dotenv==1.0.1
