@@ -499,6 +499,77 @@ h1 .accent {
 }
 .error-banner strong { font-weight: 600; }
 
+/* ─── Progress log ────────────────────────────────────────────────── */
+.progress-log {
+  margin-top: 32px;
+  padding: 16px 20px;
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: var(--radius-lg);
+  font-family: var(--font-mono, 'JetBrains Mono'), monospace;
+  font-size: 12.5px;
+  max-height: 260px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  backdrop-filter: blur(8px);
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.2) transparent;
+}
+.log-line          { line-height: 1.7; white-space: pre-wrap; }
+.log-info          { color: var(--on-dark-muted); }
+.log-success       { color: #4ade80; }
+.log-fail          { color: #f87171; }
+.log-dim           { color: rgba(148, 163, 184, 0.5); }
+
+/* ─── Best-price badge (green variant of .badge) ──────────────────── */
+.badge.best-price {
+  background: #f0fdf4;
+  color: #15803d;
+  border: 1px solid #bbf7d0;
+}
+
+/* ─── Complementary suggestions ───────────────────────────────────── */
+.suggestions {
+  margin-top: 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.suggestions-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--on-dark-muted);
+}
+.suggestions-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.suggestion-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: rgba(139, 92, 246, 0.08);
+  border: 1px solid rgba(139, 92, 246, 0.22);
+  border-radius: 999px;
+  color: #a78bfa;
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.suggestion-chip:hover {
+  background: rgba(139, 92, 246, 0.16);
+  border-color: rgba(139, 92, 246, 0.42);
+  color: #c4b5fd;
+}
+.suggestion-chip:disabled { opacity: 0.5; cursor: not-allowed; }
+.s-text   { font-weight: 600; }
+.s-reason { font-size: 11.5px; color: rgba(167, 139, 250, 0.65); font-style: italic; }
+
 /* ─── Footer ──────────────────────────────────────────────────────── */
 .footer {
   margin-top: 80px;

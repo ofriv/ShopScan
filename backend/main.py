@@ -1,9 +1,11 @@
 import asyncio
+import json
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from models import SearchRequest, SearchResponse, ProductResult, ScrapingStatus
 from pipeline import scrape_all_sites
-from query_processor import process_query, check_price
+from query_processor import process_query, check_price, get_suggestion
 import uvicorn
 
 app = FastAPI(
@@ -29,21 +31,16 @@ def root():
 @app.post("/search", response_model=SearchResponse)
 async def search(request: SearchRequest):
     """
-    Search for a product across all supported e-commerce websites.
+    Original non-streaming endpoint — kept for direct API testing.
 
     Flow:
-      1. Validate the query with OpenAI — if it's not a real product query,
-         return an error immediately (no scraping attempted).
-      2. Use the LLM-optimized per-site search strings to scrape all 4 sites
-         concurrently, each with its own fallback pipeline.
-      3. For each successful result, check whether the price looks reasonable.
-         If not, attach a warning string to the result (price is kept as-is).
+      1. Validate the query with OpenAI — if not a real product, return error.
+      2. Scrape all 4 sites concurrently with the fallback pipeline.
+      3. Price-check each successful result.
     """
-    # --- Step 1: Validate and optimize the query ---
     query_result = await process_query(request.query)
 
     if not query_result.get("valid"):
-        # Not a product query — return immediately with an error, no scraping
         return SearchResponse(
             query=request.query,
             results=[],
@@ -51,13 +48,8 @@ async def search(request: SearchRequest):
         )
 
     per_site_queries: dict[str, str] = query_result["queries"]
-
-    # --- Step 2: Scrape all sites concurrently ---
     results: list[ProductResult] = await scrape_all_sites(per_site_queries)
 
-    # --- Step 3: Price sanity check on successful results ---
-    # Build a list of coroutines — one per successful result that has both
-    # a title and a price. Non-successful results get a no-op coroutine.
     async def _check_one(result: ProductResult) -> ProductResult:
         if (
             result.status == ScrapingStatus.SUCCESS
@@ -70,8 +62,111 @@ async def search(request: SearchRequest):
         return result
 
     results = list(await asyncio.gather(*[_check_one(r) for r in results]))
-
     return SearchResponse(query=request.query, results=results)
+
+
+@app.post("/search/stream")
+async def search_stream(request: SearchRequest):
+    """
+    SSE streaming endpoint — emits JSON progress events as scraping happens.
+
+    Event shapes:
+      {"type": "query_processing"}
+      {"type": "query_done",    "queries": {"Amazon.com": "...", ...}}
+      {"type": "method_try",    "site": "...", "method": "..."}
+      {"type": "method_failed", "site": "...", "method": "...", "error": "..."}
+      {"type": "site_done",     "site": "...", "method": "..."}
+      {"type": "site_failed",   "site": "...", "error": "..."}
+      {"type": "done",          "results": [...]}
+      {"type": "error",         "message": "..."}
+    """
+    queue: asyncio.Queue = asyncio.Queue()
+
+    async def progress(event: dict) -> None:
+        """Push an event into the queue to be streamed to the client."""
+        await queue.put(event)
+
+    async def run_pipeline() -> None:
+        try:
+            # Step 1: validate and optimize the query
+            await progress({"type": "query_processing"})
+            query_result = await process_query(request.query)
+
+            if not query_result.get("valid"):
+                await progress({
+                    "type": "error",
+                    "message": query_result.get("reason", "Invalid query"),
+                })
+                return
+
+            per_site_queries: dict[str, str] = query_result["queries"]
+            await progress({"type": "query_done", "queries": per_site_queries})
+
+            # Step 2: scrape all 4 sites concurrently, each with its own fallback chain
+            results: list[ProductResult] = await scrape_all_sites(
+                per_site_queries, progress=progress
+            )
+
+            # Step 3: price sanity check — silent, no progress events needed
+            async def _check_one(result: ProductResult) -> ProductResult:
+                if (
+                    result.status == ScrapingStatus.SUCCESS
+                    and result.title
+                    and result.price is not None
+                ):
+                    warning = await check_price(result.title, result.price)
+                    if warning:
+                        result.price_warning = warning
+                return result
+
+            results = list(await asyncio.gather(*[_check_one(r) for r in results]))
+
+            await progress({
+                "type": "done",
+                # mode="json" ensures enums are serialized as their string values
+                "results": [r.model_dump(mode="json") for r in results],
+            })
+
+        except Exception as e:
+            await progress({"type": "error", "message": str(e)})
+        finally:
+            await queue.put(None)  # sentinel — tells generate() to close the stream
+
+    async def generate():
+        task = asyncio.create_task(run_pipeline())
+        try:
+            while True:
+                event = await queue.get()
+                if event is None:
+                    break
+                yield f"data: {json.dumps(event)}\n\n"
+        finally:
+            # Clean up the pipeline task if the client disconnects early
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # disable nginx buffering if present
+        },
+    )
+
+
+@app.post("/suggest")
+async def suggest(request: SearchRequest):
+    """
+    Return a complementary product suggestion for the given query.
+    Called by the frontend after results are displayed.
+    """
+    data = await get_suggestion(request.query)
+    return data
 
 
 if __name__ == "__main__":

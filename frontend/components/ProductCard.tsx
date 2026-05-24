@@ -56,7 +56,13 @@ function WarningIcon() {
   );
 }
 
-export default function ProductCard({ result }: { result: ProductResult }) {
+export default function ProductCard({
+  result,
+  isBestPrice = false,
+}: {
+  result: ProductResult;
+  isBestPrice?: boolean;
+}) {
   // Resolve retailer metadata, falling back gracefully for unknown sites
   const retailer = RETAILER_MAP[result.website] ?? {
     cls: "basic",
@@ -81,7 +87,10 @@ export default function ProductCard({ result }: { result: ProductResult }) {
               <span className="retailer-domain">{retailer.domain}</span>
             </div>
           </div>
-          <span className={`badge ${methodCls}`}>{result.method}</span>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            {isBestPrice && <span className="badge best-price">🏷️ Best Price</span>}
+            <span className={`badge ${methodCls}`}>{result.method}</span>
+          </div>
         </div>
 
         <div className="unavail-block">
@@ -131,7 +140,10 @@ export default function ProductCard({ result }: { result: ProductResult }) {
             <span className="retailer-domain">{retailer.domain}</span>
           </div>
         </div>
-        <span className={`badge ${methodCls}`}>{result.method}</span>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+          {isBestPrice && <span className="badge best-price">🏷️ Best Price</span>}
+          <span className={`badge ${methodCls}`}>{result.method}</span>
+        </div>
       </div>
 
       {/* Price warning (LLM-detected anomaly) */}

@@ -97,6 +97,41 @@ Respond with ONLY a JSON object, no markdown, no explanation:
     return json.loads(raw)
 
 
+async def get_suggestion(query: str) -> dict:
+    """
+    Suggest one complementary product that pairs well with the searched item.
+
+    Returns:
+      {"suggestion": "product name", "reason": "short pairing reason"}
+    """
+    client = _get_openai_client()
+
+    prompt = f"""A user just searched for "{query}" on a shopping price-comparison website.
+
+Suggest ONE complementary product that pairs well with this — something they might also want to buy.
+
+Examples:
+- "Apple Pencil"       → "Apple Pencil Grip"     (comfortable grip for long sessions)
+- "Gaming keyboard"   → "Gaming Mouse"           (complete the setup)
+- "MacBook Air"        → "Laptop Sleeve"          (protect their device)
+- "Sony WH-1000XM5"   → "Headphone Stand"        (keep them organized)
+
+Keep the suggestion to 2–5 words (just the product name, no brand unless essential).
+The reason should be a very short phrase (4–7 words, no period).
+
+Respond with ONLY a JSON object, no markdown:
+{{"suggestion": "product name", "reason": "short reason"}}"""
+
+    response = await client.chat.completions.create(
+        model=OPENAI_MODEL,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.4,  # slight variety so suggestions feel fresh each time
+    )
+
+    raw = _strip_fences(response.choices[0].message.content)
+    return json.loads(raw)
+
+
 async def check_price(title: str, price: float) -> str | None:
     """
     Ask the LLM whether a scraped price looks reasonable for the product.
