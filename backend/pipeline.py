@@ -84,11 +84,12 @@ async def scrape_site(site_name: str, query: str) -> ProductResult:
     )
 
 
-async def scrape_all_sites(query: str) -> list[ProductResult]:
+async def scrape_all_sites(queries: dict[str, str]) -> list[ProductResult]:
     """
     Scrape all sites concurrently.
     Each site runs its own fallback pipeline independently.
+    'queries' maps each site name to its LLM-optimized search string.
     """
-    tasks = [scrape_site(site_name, query) for site_name in SITES]
+    tasks = [scrape_site(site_name, queries[site_name]) for site_name in SITES]
     results = await asyncio.gather(*tasks, return_exceptions=False)
     return list(results)

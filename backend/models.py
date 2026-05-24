@@ -26,7 +26,8 @@ class ProductResult(BaseModel):
     product_url: Optional[str] = None     # URL of the product page
     status: ScrapingStatus = ScrapingStatus.FAILED
     method: ScrapingMethod = ScrapingMethod.NA
-    error: Optional[str] = None           # Error message if failed
+    error: Optional[str] = None           # Error message if scraping failed
+    price_warning: Optional[str] = None   # LLM warning if price seems unreasonable
 
 
 class SearchRequest(BaseModel):
@@ -38,3 +39,4 @@ class SearchResponse(BaseModel):
     """Response from the /search endpoint."""
     query: str
     results: list[ProductResult]
+    error: Optional[str] = None           # Set if the query was rejected before scraping
