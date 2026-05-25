@@ -53,8 +53,13 @@ FIRECRAWL_API_KEY=your_firecrawl_key_here
 
 Run the backend:
 ```bash
-uvicorn main:app --reload --port 8000
+uvicorn main:app
 ```
+
+> **Windows note:** do **not** use `--reload` — uvicorn's file-watcher forces a
+> `SelectorEventLoop` on Windows which prevents Playwright from launching Chrome.
+> Without `--reload`, Python uses its default `ProactorEventLoop` and the browser
+> scraper works correctly. Just restart the server manually after code changes.
 
 ### Frontend
 
