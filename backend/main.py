@@ -1,17 +1,34 @@
 import asyncio
 import json
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from models import SearchRequest, SearchResponse, ProductResult, ScrapingStatus
 from pipeline import scrape_all_sites
 from query_processor import process_query, check_price, get_suggestion
+from scrapers.browser import init_browser, close_browser
 import uvicorn
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    FastAPI lifespan handler.
+    Startup:  launch the shared Playwright browser once, so every
+              scrape_browser() call can reuse it instead of cold-starting.
+    Shutdown: close the browser cleanly before the process exits.
+    """
+    await init_browser()
+    yield
+    await close_browser()
+
 
 app = FastAPI(
     title="Shopping Scraper API",
     description="Scrapes product info from Amazon, BestBuy, Walmart, and Newegg.",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 # Allow requests from the Next.js frontend (localhost:3000)

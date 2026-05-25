@@ -18,13 +18,46 @@ from scrapers.basic import (
     best_match, parse_price, parse_rating, parse_review_count, MAX_CANDIDATES
 )
 
-PAGE_TIMEOUT = 20_000  # ms — max wait for a page or element to load
+PAGE_TIMEOUT = 10_000  # ms — max wait for a single page/element load
 VIEWPORT     = {"width": 1280, "height": 800}
 USER_AGENT   = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/120.0.0.0 Safari/537.36"
 )
+
+# ---------------------------------------------------------------------------
+# Shared browser pool — one Playwright + browser instance for the whole server.
+# Each scrape_browser() call creates its own isolated BrowserContext from it,
+# eliminating the 2-3 s cold-start overhead of launching a new browser per call.
+# ---------------------------------------------------------------------------
+
+_playwright_instance = None
+_shared_browser      = None
+
+
+async def init_browser() -> None:
+    """
+    Start Playwright and launch a single headless Chromium browser.
+    Called once at application startup (FastAPI lifespan).
+    """
+    global _playwright_instance, _shared_browser
+    _playwright_instance = await async_playwright().start()
+    _shared_browser      = await _playwright_instance.chromium.launch(headless=True)
+
+
+async def close_browser() -> None:
+    """
+    Gracefully close the shared browser and stop Playwright.
+    Called once at application shutdown (FastAPI lifespan).
+    """
+    global _playwright_instance, _shared_browser
+    if _shared_browser:
+        await _shared_browser.close()
+        _shared_browser = None
+    if _playwright_instance:
+        await _playwright_instance.stop()
+        _playwright_instance = None
 
 # CSS selector that signals the search results have rendered for each site.
 # We wait for this before grabbing page.content() so JS has time to run.
@@ -318,21 +351,34 @@ async def _scrape_with_browser(page, site_name: str, search_url: str, query: str
 async def scrape_browser(site_name: str, search_url: str, query: str) -> ProductResult:
     """
     Entry point for the browser scraping method.
-    Launches a headless Chromium browser, runs the two-step search→product flow,
-    and returns a ProductResult.
+
+    Normal path (server): reuses the shared browser launched at startup —
+    just opens a fresh isolated BrowserContext, which takes ~100 ms instead
+    of the 2-3 s cold-start of launching a whole new browser process.
+
+    Fallback path (tests / direct script use): launches a temporary browser
+    when init_browser() has not been called.
     """
-    async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=True)
+    context_kwargs = dict(viewport=VIEWPORT, user_agent=USER_AGENT, locale="en-US")
+
+    if _shared_browser is not None:
+        # Fast path: reuse the already-running browser
+        context = await _shared_browser.new_context(**context_kwargs)
         try:
-            context = await browser.new_context(
-                viewport=VIEWPORT,
-                user_agent=USER_AGENT,
-                locale="en-US",
-            )
             page        = await context.new_page()
             result_dict = await _scrape_with_browser(page, site_name, search_url, query)
         finally:
-            await browser.close()
+            await context.close()
+    else:
+        # Fallback: one-shot browser launch (no shared instance available)
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(headless=True)
+            try:
+                context     = await browser.new_context(**context_kwargs)
+                page        = await context.new_page()
+                result_dict = await _scrape_with_browser(page, site_name, search_url, query)
+            finally:
+                await browser.close()
 
     return ProductResult(
         website=site_name,

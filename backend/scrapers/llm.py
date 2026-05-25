@@ -18,7 +18,7 @@ from bs4 import BeautifulSoup
 import google.generativeai as genai
 from dotenv import load_dotenv
 from models import ProductResult, ScrapingStatus, ScrapingMethod
-from scrapers.basic import get_headers
+from scrapers.basic import get_headers, detect_block
 
 load_dotenv()
 
@@ -118,6 +118,10 @@ async def scrape_llm(site_name: str, search_url: str, query: str) -> ProductResu
     # --- Step 1: Fetch the page ---
     resp = requests.get(search_url, headers=get_headers(), timeout=10)
     resp.raise_for_status()
+    # If the site returned a CAPTCHA / block page, the extracted text would
+    # be garbage and waste a Gemini API call — fast-fail instead.
+    if detect_block(resp.text):
+        raise ValueError(f"{site_name} returned a CAPTCHA / bot-block page — skipping LLM")
 
     # --- Step 2: Extract visible text ---
     page_text = _extract_page_text(resp.text)

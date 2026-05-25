@@ -12,6 +12,7 @@ Supports an optional async progress_callback for live streaming progress events.
 """
 
 import asyncio
+import urllib.parse
 from typing import Callable, Awaitable, Optional
 from models import ProductResult, ScrapingStatus, ScrapingMethod
 
@@ -23,10 +24,16 @@ SITES = {
     "Newegg.com":  "https://www.newegg.com/p/pl?d={query}",
 }
 
-# Per-method timeout in seconds — fast bail-out so the fallback chain stays snappy
+# Per-method timeout in seconds — fast bail-out so the fallback chain stays snappy.
+# BROWSER gets 30 s because it needs to:
+#   • create a context from the shared browser (~0.1 s)
+#   • load the search page + wait for product cards  (~3-10 s each page)
+#   • navigate to the product page + scrape it       (~3-10 s)
+# The internal PAGE_TIMEOUT in browser.py is 10 s per page, so 30 s total is
+# realistic for worst-case slow pages without being absurdly long.
 METHOD_TIMEOUTS: dict[ScrapingMethod, float] = {
     ScrapingMethod.BASIC:      8.0,
-    ScrapingMethod.BROWSER:   12.0,
+    ScrapingMethod.BROWSER:   30.0,  # was 12.0 — browser needs two page loads
     ScrapingMethod.LLM:       15.0,
     ScrapingMethod.FIRECRAWL: 20.0,
 }
@@ -64,7 +71,8 @@ async def scrape_site(
     from scrapers.llm import scrape_llm
     from scrapers.firecrawl import scrape_firecrawl
 
-    search_url = SITES[site_name].format(query=query.replace(" ", "+"))
+    # quote_plus handles spaces AND special characters (quotes, slashes, etc.)
+    search_url = SITES[site_name].format(query=urllib.parse.quote_plus(query))
 
     methods = [
         (ScrapingMethod.BASIC,     scrape_basic),

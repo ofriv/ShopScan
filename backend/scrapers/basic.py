@@ -24,7 +24,36 @@ def get_headers() -> dict:
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Encoding": "gzip, deflate, br",
         "Connection": "keep-alive",
+        "Referer": "https://www.google.com/",
+        "DNT": "1",
+        "Upgrade-Insecure-Requests": "1",
     }
+
+
+# Signals that the response is a bot-block / CAPTCHA page, not real content.
+# Checked on the first ~5 KB only — block pages are almost always short.
+BLOCK_MARKERS = [
+    "robot check",
+    "enter the characters you see below",
+    "automated access",
+    "captcha",
+    "access denied",
+    "unusual traffic",
+    "verify you are human",
+    "please enable cookies",
+    "why did this happen",      # Cloudflare challenge page
+    "ray id",                   # Cloudflare footer marker
+]
+
+
+def detect_block(html: str) -> bool:
+    """
+    Returns True if the page looks like a CAPTCHA or bot-block response.
+    Call this right after requests.get() so we fast-fail instead of silently
+    returning None after finding zero product cards.
+    """
+    sample = html[:5_000].lower()
+    return any(marker in sample for marker in BLOCK_MARKERS)
 
 
 def similarity_score(query: str, title: str) -> float:
@@ -141,6 +170,8 @@ def scrape_amazon(search_url: str, query: str) -> dict | None:
     """Scrape Amazon search results page."""
     resp = requests.get(search_url, headers=get_headers(), timeout=10)
     resp.raise_for_status()
+    if detect_block(resp.text):
+        raise ValueError("Amazon returned a CAPTCHA / bot-block page")
     soup = BeautifulSoup(resp.text, "lxml")
 
     candidates = []
@@ -187,6 +218,8 @@ def scrape_bestbuy(search_url: str, query: str) -> dict | None:
     """Scrape BestBuy search results page."""
     resp = requests.get(search_url, headers=get_headers(), timeout=10)
     resp.raise_for_status()
+    if detect_block(resp.text):
+        raise ValueError("BestBuy returned a CAPTCHA / bot-block page")
     soup = BeautifulSoup(resp.text, "lxml")
 
     candidates = []
@@ -226,6 +259,8 @@ def scrape_walmart(search_url: str, query: str) -> dict | None:
 
     resp = requests.get(search_url, headers=get_headers(), timeout=10)
     resp.raise_for_status()
+    if detect_block(resp.text):
+        raise ValueError("Walmart returned a CAPTCHA / bot-block page")
     soup = BeautifulSoup(resp.text, "lxml")
 
     candidates = []
@@ -273,6 +308,8 @@ def scrape_newegg(search_url: str, query: str) -> dict | None:
     """Scrape Newegg search results page."""
     resp = requests.get(search_url, headers=get_headers(), timeout=10)
     resp.raise_for_status()
+    if detect_block(resp.text):
+        raise ValueError("Newegg returned a CAPTCHA / bot-block page")
     soup = BeautifulSoup(resp.text, "lxml")
 
     candidates = []
