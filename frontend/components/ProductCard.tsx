@@ -1,16 +1,14 @@
 /**
  * ProductCard — displays the scraping result for a single retailer.
  *
- * Handles two visual states:
- *   - Available (status === "Success"): shows title, price, rating, link
- *   - Unavailable (status === "Failed"): muted "Not Available" layout
- *
- * The method badge in the top-right corner shows which scraper succeeded
- * (or which one was last tried before all failed).
+ * Props:
+ *   result       — the scraped data
+ *   isBestPrice  — true on the cheapest successful card (adds .card.best class)
+ *   rank         — position after sorting (1, 2, 3 …), null for unavailable cards
+ *   lowestPrice  — the cheapest price across all successful cards (for delta/bar)
  */
 import type { ProductResult } from "@/types";
 
-// Maps backend website names → display metadata
 const RETAILER_MAP: Record<
   string,
   { cls: string; initial: string; display: string; domain: string }
@@ -21,7 +19,6 @@ const RETAILER_MAP: Record<
   "Newegg.com":  { cls: "newegg",  initial: "N", display: "Newegg",   domain: "newegg.com" },
 };
 
-// Maps ScrapingMethod → CSS badge class
 const METHOD_CLS: Record<string, string> = {
   Basic:     "basic",
   Browser:   "browser",
@@ -59,11 +56,14 @@ function WarningIcon() {
 export default function ProductCard({
   result,
   isBestPrice = false,
+  rank = null,
+  lowestPrice = null,
 }: {
   result: ProductResult;
   isBestPrice?: boolean;
+  rank?: number | null;
+  lowestPrice?: number | null;
 }) {
-  // Resolve retailer metadata, falling back gracefully for unknown sites
   const retailer = RETAILER_MAP[result.website] ?? {
     cls: "basic",
     initial: result.website[0]?.toUpperCase() ?? "?",
@@ -72,6 +72,25 @@ export default function ProductCard({
   };
   const methodCls = METHOD_CLS[result.method] ?? "na";
   const isAvailable = result.status === "Success";
+  const isNA = result.method === "N/A";
+
+  // Price delta vs lowest (only for non-best available cards)
+  const priceDelta =
+    !isBestPrice && result.price !== null && lowestPrice !== null
+      ? result.price - lowestPrice
+      : null;
+
+  // Comparison bar: best card = 100%, others shrink proportionally
+  const barWidth =
+    result.price !== null && lowestPrice !== null && result.price > 0
+      ? Math.round((lowestPrice / result.price) * 100)
+      : 100;
+
+  // Split price into dollars / cents for the new display format
+  const [dollars, cents] =
+    result.price !== null
+      ? result.price.toFixed(2).split(".")
+      : ["—", null];
 
   // ── Unavailable state ───────────────────────────────────────────────
   if (!isAvailable) {
@@ -87,10 +106,7 @@ export default function ProductCard({
               <span className="retailer-domain">{retailer.domain}</span>
             </div>
           </div>
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
-            {isBestPrice && <span className="badge best-price">🏷️ Best Price</span>}
-            <span className={`badge ${methodCls}`}>{result.method}</span>
-          </div>
+          <span className={`badge ${methodCls}`}>{result.method}</span>
         </div>
 
         <div className="unavail-block">
@@ -128,7 +144,12 @@ export default function ProductCard({
 
   // ── Available state ─────────────────────────────────────────────────
   return (
-    <article className="card">
+    <article className={`card${isBestPrice ? " best" : ""}`}>
+      {/* Rank badge (#1, #2 …) */}
+      {rank !== null && (
+        <div className="rank"><b>#{rank}</b></div>
+      )}
+
       {/* Header: retailer logo + method badge */}
       <div className="card-head">
         <div className="retailer">
@@ -140,10 +161,9 @@ export default function ProductCard({
             <span className="retailer-domain">{retailer.domain}</span>
           </div>
         </div>
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
-          {isBestPrice && <span className="badge best-price">🏷️ Best Price</span>}
-          <span className={`badge ${methodCls}`}>{result.method}</span>
-        </div>
+        <span className={`badge ${methodCls}`}>
+          {!isNA && "✓ "}{result.method}
+        </span>
       </div>
 
       {/* Price warning (LLM-detected anomaly) */}
@@ -157,21 +177,43 @@ export default function ProductCard({
       {/* Product title — clamped to 2 lines */}
       <div className="product-title">{result.title}</div>
 
-      {/* Price */}
+      {/* Price + delta badge */}
       <div className="price-row">
         <span className="price">
-          ${result.price?.toFixed(2) ?? "—"}
+          ${dollars}
+          {cents !== null && <span className="cents">.{cents}</span>}
         </span>
+        {isBestPrice && <span className="delta best">✓ LOWEST</span>}
+        {priceDelta !== null && (
+          <span className="delta up">+${priceDelta.toFixed(2)}</span>
+        )}
       </div>
 
-      {/* Rating + review count (omitted if both are null) */}
+      {/* Comparison bar — shown whenever we have a lowestPrice to compare to */}
+      {lowestPrice !== null && result.price !== null && (
+        <div className="compare">
+          <div className="compare-bar">
+            <div
+              className="compare-bar-fill"
+              style={{ width: `${barWidth}%` }}
+            />
+          </div>
+          <div className="compare-meta">
+            <span>${result.price.toFixed(2)}</span>
+            {!isBestPrice && priceDelta !== null && lowestPrice > 0 && (
+              <span>
+                +{((priceDelta / lowestPrice) * 100).toFixed(0)}% vs ${lowestPrice.toFixed(2)}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Rating + review count */}
       {(result.rating !== null || result.review_count !== null) && (
         <div className="rating">
           {result.rating !== null && (
-            <span
-              className="stars"
-              aria-label={`${result.rating} out of 5`}
-            >
+            <span className="stars" aria-label={`${result.rating} out of 5`}>
               <StarIcon />
               <span style={{ color: "var(--text)", fontWeight: 600 }}>
                 {result.rating.toFixed(1)}

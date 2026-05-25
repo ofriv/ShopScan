@@ -1,6 +1,6 @@
 /**
  * SkeletonCard — shimmer placeholder shown while a site is being scraped.
- * Four of these are rendered in the grid during the loading state.
+ * Now includes the diagonal sweep animation from the new design.
  */
 export default function SkeletonCard() {
   return (
@@ -12,7 +12,7 @@ export default function SkeletonCard() {
           <div className="sk sk-line" style={{ width: "55%" }} />
           <div className="sk sk-line" style={{ width: "35%", height: 8 }} />
         </div>
-        <div className="sk sk-line" style={{ width: 60, height: 18, borderRadius: 6 }} />
+        <div className="sk sk-line" style={{ width: 60, height: 18, borderRadius: 5 }} />
       </div>
 
       {/* Product title */}
@@ -23,6 +23,9 @@ export default function SkeletonCard() {
 
       {/* Price */}
       <div className="sk sk-h" />
+
+      {/* Comparison bar */}
+      <div className="sk sk-line" style={{ width: "100%", height: 4 }} />
 
       {/* Rating */}
       <div className="sk-row">

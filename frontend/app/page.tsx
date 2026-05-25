@@ -1,23 +1,21 @@
 "use client";
 
 /**
- * Main page — search bar, live progress log, results grid, and suggestions.
+ * Main page — search bar, scan-status panel, results grid, and suggestions.
  *
  * Flow:
- *   1. User types a query and submits (or clicks a quick chip / suggestion chip).
+ *   1. User types a query and submits (or clicks a chip).
  *   2. POST /search/stream → SSE stream from FastAPI on localhost:8000.
- *   3. While streaming: show skeleton cards + live progress log below the grid.
- *   4. On "done" event: render 4 ProductCards, hide log, fetch suggestion in background.
- *   5. On "error" event: show error banner, keep log visible.
- *   6. Suggestion chips accumulate below the grid — clicking one runs a new search.
+ *   3. While streaming: skeleton cards + live scan-status panel update per site.
+ *   4. On "done": render ProductCards (sorted), hide skeleton, fetch suggestion.
+ *   5. Suggestion chips accumulate below the grid — clicking one runs a new search.
  */
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef } from "react";
 import type { ProductResult, ProgressEvent, SuggestResponse } from "@/types";
 import ProductCard from "@/components/ProductCard";
 import SkeletonCard from "@/components/SkeletonCard";
 
-// Quick-search suggestion chips shown below the search bar
 const QUICK_CHIPS = [
   "Sony WH-1000XM5",
   "iPad Air M3",
@@ -28,46 +26,63 @@ const QUICK_CHIPS = [
 
 const BACKEND_URL = "http://localhost:8000";
 
-// ── Log line type ────────────────────────────────────────────────────────────
-interface LogLine {
-  text: string;
-  cls: "log-info" | "log-success" | "log-fail" | "log-dim";
+// Human-readable name for each site key
+const SITE_DISPLAY: Record<string, string> = {
+  "Amazon.com":  "Amazon",
+  "BestBuy.com": "Best Buy",
+  "Walmart.com": "Walmart",
+  "Newegg.com":  "Newegg",
+};
+
+// ── Per-site scan state ───────────────────────────────────────────────────────
+type SiteStateValue = "idle" | "run" | "ok" | "warn" | "fail";
+
+interface SiteState {
+  state: SiteStateValue;
+  method: string;   // last method tried or succeeded
+  elapsed: string;  // "1.23s" after site_done / site_failed
 }
 
+const INITIAL_SITE_STATES: Record<string, SiteState> = Object.fromEntries(
+  Object.keys(SITE_DISPLAY).map((k) => [k, { state: "idle", method: "—", elapsed: "" }])
+);
+
+// ── Sort key ─────────────────────────────────────────────────────────────────
+type SortKey = "price" | "rating" | "speed";
+
+const METHOD_SPEED: Record<string, number> = {
+  Basic: 1, Browser: 2, LLM: 3, Firecrawl: 4, "N/A": 5,
+};
+
+// ── Component ─────────────────────────────────────────────────────────────────
 export default function Home() {
-  const [query, setQuery]               = useState("");
-  const [loading, setLoading]           = useState(false);
-  const [results, setResults]           = useState<ProductResult[] | null>(null);
-  const [queryError, setQueryError]     = useState<string | null>(null);
-  const [fetchError, setFetchError]     = useState<string | null>(null);
+  const [query, setQuery]                 = useState("");
+  const [loading, setLoading]             = useState(false);
+  const [results, setResults]             = useState<ProductResult[] | null>(null);
+  const [queryError, setQueryError]       = useState<string | null>(null);
+  const [fetchError, setFetchError]       = useState<string | null>(null);
   const [searchedQuery, setSearchedQuery] = useState("");
-  const [searchTime, setSearchTime]     = useState<number | null>(null);
+  const [searchTime, setSearchTime]       = useState<number | null>(null);
+  const [siteStates, setSiteStates]       = useState<Record<string, SiteState>>(INITIAL_SITE_STATES);
+  const [suggestions, setSuggestions]     = useState<SuggestResponse[]>([]);
+  const [sortBy, setSortBy]               = useState<SortKey>("price");
 
-  // Live progress log — fills during streaming, hides when cards appear
-  const [progressLog, setProgressLog]   = useState<LogLine[]>([]);
+  // Per-site start timestamps (don't need to trigger re-renders)
+  const siteStartTimesRef = useRef<Record<string, number>>({});
+  const searchStartRef    = useRef<number>(0);
 
-  // Complementary suggestions — accumulate across searches, never cleared
-  const [suggestions, setSuggestions]   = useState<SuggestResponse[]>([]);
+  // ── Helpers ──────────────────────────────────────────────────────────────
 
-  // Ref used to auto-scroll the log to the latest entry
-  const logEndRef = useRef<HTMLDivElement>(null);
-
-  // Scroll the progress log to bottom whenever a new line is added
-  useEffect(() => {
-    logEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [progressLog]);
-
-  // ── Helpers ─────────────────────────────────────────────────────────────
-
-  function addLog(text: string, cls: LogLine["cls"] = "log-info") {
-    setProgressLog(prev => [...prev, { text, cls }]);
+  function updateSite(site: string, patch: Partial<SiteState>) {
+    setSiteStates((prev) => ({ ...prev, [site]: { ...prev[site], ...patch } }));
   }
 
-  function addLogs(lines: LogLine[]) {
-    setProgressLog(prev => [...prev, ...lines]);
+  function elapsed(site: string): string {
+    const t = siteStartTimesRef.current[site];
+    return t ? `${((Date.now() - t) / 1000).toFixed(2)}s` : "";
   }
 
-  // ── Suggestion fetch (non-blocking, called after results arrive) ─────────
+  // ── Suggestion fetch (non-blocking) ─────────────────────────────────────
 
   async function fetchSuggestion(q: string) {
     try {
@@ -79,26 +94,32 @@ export default function Home() {
       if (!res.ok) return;
       const data: SuggestResponse = await res.json();
       if (data.suggestion) {
-        setSuggestions(prev => [...prev, data]);
+        // Deduplicate by suggestion text
+        setSuggestions((prev) =>
+          prev.some((s) => s.suggestion === data.suggestion) ? prev : [...prev, data]
+        );
       }
     } catch {
-      // Suggestions are non-critical — silently ignore any errors
+      // Suggestions are non-critical — silently ignore errors
     }
   }
 
-  // ── Main search function ─────────────────────────────────────────────────
+  // ── Main search ──────────────────────────────────────────────────────────
 
   async function runSearch(q: string) {
     const trimmed = q.trim();
     if (!trimmed || loading) return;
 
+    // Reset state for new search
     setLoading(true);
     setResults(null);
     setQueryError(null);
     setFetchError(null);
     setSearchedQuery(trimmed);
-    setProgressLog([]);
-    const start = performance.now();
+    setSearchTime(null);
+    setSiteStates(INITIAL_SITE_STATES);
+    siteStartTimesRef.current = {};
+    searchStartRef.current = performance.now();
 
     try {
       const res = await fetch(`${BACKEND_URL}/search/stream`, {
@@ -107,96 +128,82 @@ export default function Home() {
         body: JSON.stringify({ query: trimmed }),
       });
 
-      if (!res.ok) {
-        throw new Error(`Backend returned HTTP ${res.status}`);
-      }
+      if (!res.ok) throw new Error(`Backend returned HTTP ${res.status}`);
 
-      const reader = res.body!.getReader();
+      const reader  = res.body!.getReader();
       const decoder = new TextDecoder();
-      let buffer = "";
+      let buffer    = "";
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
-        // Accumulate text and split on SSE double-newline boundaries
         buffer += decoder.decode(value, { stream: true });
         const parts = buffer.split("\n\n");
-        buffer = parts.pop() ?? ""; // keep any incomplete tail for next chunk
+        buffer = parts.pop() ?? "";
 
         for (const part of parts) {
           const line = part.trim();
           if (!line.startsWith("data: ")) continue;
 
           let event: ProgressEvent;
-          try {
-            event = JSON.parse(line.slice(6));
-          } catch {
-            continue; // skip malformed lines
-          }
+          try { event = JSON.parse(line.slice(6)); }
+          catch { continue; }
 
-          // ── Handle each SSE event type ──────────────────────────────────
+          // ── Handle each SSE event ───────────────────────────────────
           switch (event.type) {
 
-            case "query_processing":
-              addLog("🔍 Validating query with AI...", "log-info");
-              break;
-
-            case "query_done":
-              if (event.queries) {
-                addLogs([
-                  { text: "✅ Query optimized:", cls: "log-success" },
-                  ...Object.entries(event.queries).map(([site, sq]) => ({
-                    text: `   ${site.padEnd(13)} → "${sq}"`,
-                    cls: "log-dim" as const,
-                  })),
-                ]);
+            case "method_try":
+              if (event.site && event.method) {
+                // Record site start time on first method_try
+                if (!siteStartTimesRef.current[event.site]) {
+                  siteStartTimesRef.current[event.site] = Date.now();
+                }
+                updateSite(event.site, { state: "run", method: event.method });
               }
               break;
 
-            case "method_try":
-              addLog(
-                `   ⏳ ${event.site}  ·  Trying ${event.method}...`,
-                "log-dim",
-              );
-              break;
-
             case "method_failed":
-              addLog(
-                `   ❌ ${event.site}  ·  ${event.method} failed — ${event.error}`,
-                "log-fail",
-              );
+              // Site stays "run" — next method_try will update the method name
               break;
 
             case "site_done":
-              addLog(
-                `   ✅ ${event.site}  ·  ${event.method} succeeded!`,
-                "log-success",
-              );
+              if (event.site && event.method) {
+                updateSite(event.site, {
+                  state: "ok",
+                  method: event.method,
+                  elapsed: elapsed(event.site),
+                });
+              }
               break;
 
             case "site_failed":
-              addLog(
-                `   ✗  ${event.site}  ·  All methods failed`,
-                "log-fail",
-              );
+              if (event.site) {
+                updateSite(event.site, {
+                  state: "fail",
+                  method: "N/A",
+                  elapsed: elapsed(event.site),
+                });
+              }
               break;
 
             case "done": {
               const finalResults = event.results ?? [];
-              setSearchTime((performance.now() - start) / 1000);
+              setSearchTime((performance.now() - searchStartRef.current) / 1000);
               setResults(finalResults);
-              // Fire-and-forget suggestion fetch — never blocks the UI
-              if (finalResults.length > 0) {
-                fetchSuggestion(trimmed);
-              }
+              // Promote sites with price_warning to "warn" state
+              finalResults.forEach((r) => {
+                if (r.price_warning && r.status === "Success") {
+                  updateSite(r.website, { state: "warn" });
+                }
+              });
+              if (finalResults.length > 0) fetchSuggestion(trimmed);
               break;
             }
 
             case "error":
               setQueryError(event.message ?? "Unknown error");
               setResults([]);
-              addLog(`⚠  ${event.message}`, "log-fail");
               break;
           }
         }
@@ -213,29 +220,43 @@ export default function Home() {
     }
   }
 
-  // ── Derived state ────────────────────────────────────────────────────────
+  // ── Derived state ─────────────────────────────────────────────────────────
 
-  // Website of the cheapest successful result (for the Best Price badge)
-  const bestPriceWebsite =
+  // Best price = cheapest successful result (used for card.best treatment + delta)
+  const bestResult =
     results
-      ?.filter(r => r.status === "Success" && r.price !== null)
+      ?.filter((r) => r.status === "Success" && r.price !== null)
       .reduce<ProductResult | null>(
         (best, r) => (!best || r.price! < best.price!) ? r : best,
         null,
-      )?.website ?? null;
+      ) ?? null;
+  const bestPriceWebsite = bestResult?.website ?? null;
+  const lowestPrice      = bestResult?.price ?? null;
 
-  const successCount = results?.filter(r => r.status === "Success").length ?? 0;
+  const successCount = results?.filter((r) => r.status === "Success").length ?? 0;
   const showResults  = loading || results !== null;
 
-  // Show the log while loading, or after a search that returned no cards
-  const showLog =
-    loading ||
-    (progressLog.length > 0 && (!results || results.length === 0));
+  // Sorted results: available cards first, then by chosen sort key
+  const sortedResults = results
+    ? [...results].sort((a, b) => {
+        const aOk = a.status === "Success", bOk = b.status === "Success";
+        if (aOk !== bOk) return aOk ? -1 : 1;
+        if (!aOk) return 0;
+        switch (sortBy) {
+          case "price":  return (a.price  ?? Infinity) - (b.price  ?? Infinity);
+          case "rating": return (b.rating ?? 0)        - (a.rating ?? 0);
+          case "speed":  return (METHOD_SPEED[a.method] ?? 5) - (METHOD_SPEED[b.method] ?? 5);
+          default:       return 0;
+        }
+      })
+    : null;
+
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
     <div className="page">
 
-      {/* ── Top bar ─────────────────────────────────────────────────── */}
+      {/* ── Top bar ──────────────────────────────────────────────────── */}
       <header className="topbar">
         <div className="brand">
           <span className="brand-mark" aria-hidden="true" />
@@ -247,23 +268,24 @@ export default function Home() {
         </nav>
       </header>
 
-      {/* ── Hero ────────────────────────────────────────────────────── */}
+      {/* ── Hero ─────────────────────────────────────────────────────── */}
       <section className="hero">
         <div className="eyebrow">
-          <span className="dot" />
+          <span className="pulse" />
           4 retailers · live scraping
         </div>
         <h1>
-          Compare prices across{" "}
-          <span className="accent">top retailers</span> instantly.
+          One search.<br />
+          <em>Every</em> retailer.
         </h1>
         <p className="tagline">
-          One search. Four scrapers. Side-by-side prices, ratings, and
-          availability from Amazon, Best Buy, Walmart, and Newegg.
+          Side-by-side prices, ratings, and availability — pulled live from
+          Amazon, Best Buy, Walmart, and Newegg using four different scraping
+          strategies.
         </p>
       </section>
 
-      {/* ── Search bar ──────────────────────────────────────────────── */}
+      {/* ── Search bar ───────────────────────────────────────────────── */}
       <section className="search">
         <form
           className="search-row"
@@ -274,7 +296,6 @@ export default function Home() {
           autoComplete="off"
         >
           <div className="search-input-wrap">
-            {/* Search icon */}
             <svg
               viewBox="0 0 24 24"
               fill="none"
@@ -295,12 +316,12 @@ export default function Home() {
               disabled={loading}
             />
           </div>
+          <span className="search-meta">/scan</span>
           <button type="submit" disabled={loading}>
             <span>{loading ? "Searching…" : "Search"}</span>
             {!loading && (
               <svg
-                width="14"
-                height="14"
+                width="14" height="14"
                 viewBox="0 0 24 24"
                 fill="none"
                 stroke="currentColor"
@@ -315,81 +336,135 @@ export default function Home() {
           </button>
         </form>
 
-        {/* Quick-search chips */}
+        {/* Quick-search chips with numbered tags */}
         <div className="quick-row">
-          {QUICK_CHIPS.map((chip) => (
+          {QUICK_CHIPS.map((chip, i) => (
             <button
               key={chip}
               type="button"
               className="chip"
               disabled={loading}
-              onClick={() => {
-                setQuery(chip);
-                runSearch(chip);
-              }}
+              onClick={() => { setQuery(chip); runSearch(chip); }}
             >
+              <span className="chip-tag">{String(i + 1).padStart(2, "0")}</span>
               {chip}
             </button>
           ))}
         </div>
       </section>
 
-      {/* ── Query-rejection error banner ─────────────────────────────── */}
+      {/* ── Query-rejection error ─────────────────────────────────────── */}
       {queryError && !loading && (
         <div className="error-banner">
           <strong>Query rejected:</strong> {queryError}
         </div>
       )}
 
-      {/* ── Network / backend error banner ───────────────────────────── */}
+      {/* ── Network / backend error ───────────────────────────────────── */}
       {fetchError && !loading && (
         <div className="error-banner">
           <strong>Connection error:</strong> {fetchError}
         </div>
       )}
 
-      {/* ── Results section ──────────────────────────────────────────── */}
+      {/* ── Scan status panel ─────────────────────────────────────────── */}
       {showResults && (
-        <>
-          <div className="results-meta">
-            <div className="results-title">
-              Results for <span>&ldquo;{searchedQuery}&rdquo;</span>
+        <section className="scan-panel">
+          <div className="scan-head">
+            <div className="scan-head-left">
+              <span>$ shopscan</span>
+              <span className="query-echo">&ldquo;{searchedQuery}&rdquo;</span>
             </div>
-            <div className="results-stats">
-              {loading
-                ? "scanning retailers…"
-                : `${successCount} of 4 retailers · ${searchTime?.toFixed(2)}s`}
+            <div className="scan-head-right">
+              {loading ? (
+                <span className="scan-scanning">scanning…</span>
+              ) : (
+                <>
+                  <span><b>{successCount}</b> / 4 sources</span>
+                  <span className="sep">·</span>
+                  <span><b>{searchTime?.toFixed(2)}s</b></span>
+                  <span className="sep">·</span>
+                  {fetchError || queryError
+                    ? <span className="scan-err">✗ error</span>
+                    : <span className="scan-ok">✓ ready</span>
+                  }
+                </>
+              )}
             </div>
           </div>
 
-          <div className="grid">
-            {loading
-              ? Array.from({ length: 4 }, (_, i) => <SkeletonCard key={i} />)
-              : results?.map((result) => (
-                  <ProductCard
-                    key={result.website}
-                    result={result}
-                    isBestPrice={result.website === bestPriceWebsite}
-                  />
-                ))}
+          <div className="scan-strip">
+            {Object.entries(SITE_DISPLAY).map(([site, name]) => {
+              const s = siteStates[site];
+              const meta =
+                s.state === "idle" ? "—" :
+                s.state === "run"  ? `${s.method} · …` :
+                s.state === "fail" ? "FAILED" :
+                `${s.method} · ${s.elapsed}`;
+              return (
+                <div key={site} className="scan-item" data-state={s.state}>
+                  <span className="scan-dot" />
+                  <span className="r-name">{name}</span>
+                  <span className="r-meta">{meta}</span>
+                </div>
+              );
+            })}
           </div>
-        </>
+        </section>
       )}
 
-      {/* ── Live progress log ────────────────────────────────────────── */}
-      {showLog && progressLog.length > 0 && (
-        <div className="progress-log" role="log" aria-live="polite">
-          {progressLog.map((line, i) => (
-            <div key={i} className={`log-line ${line.cls}`}>
-              {line.text}
+      {/* ── Results meta + sort tabs ──────────────────────────────────── */}
+      {showResults && (
+        <div className="results-meta">
+          <div className="results-title">
+            {loading ? (
+              <>Scanning <em>&ldquo;{searchedQuery}&rdquo;</em>…</>
+            ) : (
+              <>
+                {successCount} result{successCount !== 1 ? "s" : ""}{" "}
+                <em>
+                  {sortBy === "price"  ? "sorted by price" :
+                   sortBy === "rating" ? "sorted by rating" :
+                                        "sorted by method speed"}{" "}
+                  for &ldquo;{searchedQuery}&rdquo;
+                </em>
+              </>
+            )}
+          </div>
+          {!loading && (
+            <div className="sort-tabs">
+              {(["price", "rating", "speed"] as SortKey[]).map((key) => (
+                <button
+                  key={key}
+                  className={`sort-tab${sortBy === key ? " active" : ""}`}
+                  onClick={() => setSortBy(key)}
+                >
+                  {key === "price" ? "Price" : key === "rating" ? "Rating" : "Speed"}
+                </button>
+              ))}
             </div>
-          ))}
-          {/* Invisible anchor that we scroll into view when new lines arrive */}
-          <div ref={logEndRef} />
+          )}
         </div>
       )}
 
-      {/* ── Complementary suggestions ────────────────────────────────── */}
+      {/* ── Cards grid ───────────────────────────────────────────────── */}
+      {showResults && (
+        <div className="grid">
+          {loading
+            ? Array.from({ length: 4 }, (_, i) => <SkeletonCard key={i} />)
+            : sortedResults?.map((result, i) => (
+                <ProductCard
+                  key={result.website}
+                  result={result}
+                  isBestPrice={result.website === bestPriceWebsite}
+                  rank={result.status === "Success" ? i + 1 : null}
+                  lowestPrice={lowestPrice}
+                />
+              ))}
+        </div>
+      )}
+
+      {/* ── Complementary suggestions ─────────────────────────────────── */}
       {suggestions.length > 0 && (
         <div className="suggestions">
           <div className="suggestions-label">💡 You might also like:</div>
@@ -400,10 +475,7 @@ export default function Home() {
                 type="button"
                 className="suggestion-chip"
                 disabled={loading}
-                onClick={() => {
-                  setQuery(s.suggestion);
-                  runSearch(s.suggestion);
-                }}
+                onClick={() => { setQuery(s.suggestion); runSearch(s.suggestion); }}
               >
                 <span className="s-text">{s.suggestion}</span>
                 <span className="s-reason">— {s.reason}</span>
@@ -413,27 +485,15 @@ export default function Home() {
         </div>
       )}
 
-      {/* ── Footer ──────────────────────────────────────────────────── */}
+      {/* ── Footer ───────────────────────────────────────────────────── */}
       <footer className="footer">
-        <div>© 2026 ShopScan · Built for comparison shoppers</div>
         <div className="legend">
-          <span>
-            <i className="l-basic" />
-            Basic HTTP
-          </span>
-          <span>
-            <i className="l-browser" />
-            Headless Browser
-          </span>
-          <span>
-            <i className="l-llm" />
-            LLM extract
-          </span>
-          <span>
-            <i className="l-firecrawl" />
-            Firecrawl
-          </span>
+          <span><i className="l-basic" />Basic HTTP</span>
+          <span><i className="l-browser" />Headless Browser</span>
+          <span><i className="l-llm" />LLM extract</span>
+          <span><i className="l-firecrawl" />Firecrawl</span>
         </div>
+        <div>© 2026 ShopScan · Built for comparison shoppers</div>
       </footer>
     </div>
   );
