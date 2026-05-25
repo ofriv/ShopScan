@@ -17,9 +17,27 @@ async def lifespan(app: FastAPI):
     FastAPI lifespan handler.
     Startup:  launch the shared Playwright browser once, so every
               scrape_browser() call can reuse it instead of cold-starting.
+
+              NOTE — Windows + uvicorn --reload incompatibility:
+              uvicorn's file-watcher forces WindowsSelectorEventLoopPolicy, which
+              does NOT support launching subprocesses (needed by Playwright).
+              When this happens the error is caught here: the app starts normally
+              and the browser scraper simply fails fast (pipeline moves to LLM).
+              To enable browser scraping run WITHOUT --reload:
+                  uvicorn main:app          (recommended)
+                  python main.py            (sets reload=False automatically)
+
     Shutdown: close the browser cleanly before the process exits.
     """
-    await init_browser()
+    try:
+        await init_browser()
+    except NotImplementedError:
+        print(
+            "[startup] WARNING: Playwright could not start — "
+            "Windows SelectorEventLoop does not support subprocesses.\n"
+            "[startup]          Run `uvicorn main:app` (no --reload) "
+            "to enable the browser scraper."
+        )
     yield
     await close_browser()
 
@@ -187,4 +205,7 @@ async def suggest(request: SearchRequest):
 
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    # reload=False so Python uses its default ProactorEventLoop on Windows,
+    # which allows Playwright to launch subprocesses (Chrome).
+    # Use `uvicorn main:app --reload` only if you don't need the browser scraper.
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=False)
