@@ -13,7 +13,7 @@
  *   4. User submits a new manual search → everything clears and restarts.
  */
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { SuggestResponse } from "@/types";
 import SearchResultsSection from "@/components/SearchResultsSection";
 import { useSearchSlot } from "@/hooks/useSearchSlot";
@@ -33,6 +33,22 @@ const BACKEND_URL = "http://localhost:8000";
 export default function Home() {
   const [query, setQuery]           = useState("");
   const [suggestions, setSuggestions] = useState<SuggestResponse[]>([]);
+  const [activeModal, setActiveModal] = useState<"how_it_works" | "retailers" | null>(null);
+
+  // Close modal on escape keypress
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        setActiveModal(null);
+      }
+    }
+    if (activeModal) {
+      window.addEventListener("keydown", handleKeyDown);
+    }
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [activeModal]);
 
   // Two independent search slots
   const primary   = useSearchSlot();
@@ -96,8 +112,24 @@ export default function Home() {
           <span>ShopScan</span>
         </div>
         <nav>
-          <a href="#">How it works</a>
-          <a href="#">Retailers</a>
+          <a
+            href="#how-it-works"
+            onClick={(e) => {
+              e.preventDefault();
+              setActiveModal("how_it_works");
+            }}
+          >
+            How it works
+          </a>
+          <a
+            href="#retailers"
+            onClick={(e) => {
+              e.preventDefault();
+              setActiveModal("retailers");
+            }}
+          >
+            Retailers
+          </a>
         </nav>
       </header>
 
@@ -262,6 +294,109 @@ export default function Home() {
         </div>
         <div>© 2026 ShopScan · Built for comparison shoppers</div>
       </footer>
+
+      {/* ── Modal Popups ────────────────────────────────────────────── */}
+      {activeModal && (
+        <div 
+          className="modal-backdrop"
+          onClick={() => setActiveModal(null)}
+        >
+          <div 
+            className="modal-container"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-header">
+              <h2 className="modal-title">
+                {activeModal === "how_it_works" ? "How ShopScan Works" : "Supported Retailers"}
+              </h2>
+              <button 
+                className="modal-close"
+                onClick={() => setActiveModal(null)}
+                aria-label="Close modal"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="modal-body">
+              {activeModal === "how_it_works" ? (
+                <div className="modal-steps">
+                  <div className="modal-step">
+                    <span className="modal-step-num">01</span>
+                    <div className="modal-step-content">
+                      <span className="modal-step-title">Query Processing</span>
+                      <span className="modal-step-desc">
+                        Your search query is analyzed and validated using GPT-4o-mini. The AI optimizes the search terms specifically for each retailer's catalog format.
+                      </span>
+                    </div>
+                  </div>
+                  <div className="modal-step">
+                    <span className="modal-step-num">02</span>
+                    <div className="modal-step-content">
+                      <span className="modal-step-title">Concurrent Execution</span>
+                      <span className="modal-step-desc">
+                        ShopScan fires simultaneous scraper threads for Amazon, Best Buy, Walmart, and Newegg in parallel so you get side-by-side results without waiting.
+                      </span>
+                    </div>
+                  </div>
+                  <div className="modal-step">
+                    <span className="modal-step-num">03</span>
+                    <div className="modal-step-content">
+                      <span className="modal-step-title">Sequential Fallback Pipeline</span>
+                      <span className="modal-step-desc">
+                        Each source tries 4 scraping methods in order: <b>Basic HTTP Scraping</b> ➔ <b>Playwright Browser rendering</b> ➔ <b>Gemini LLM extraction</b> ➔ <b>Firecrawl API</b>. If one method fails, it instantly falls back to the next.
+                      </span>
+                    </div>
+                  </div>
+                  <div className="modal-step">
+                    <span className="modal-step-num">04</span>
+                    <div className="modal-step-content">
+                      <span className="modal-step-title">Data Validation</span>
+                      <span className="modal-step-desc">
+                        We check results for similarity to prevent off-topic cards, strip out accessories (e.g. phone cases when searching for a phone), and flag suspicious prices.
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="modal-retailers">
+                  <div className="modal-retailer-card">
+                    <div className="modal-retailer-head">
+                      <span className="retailer-name" style={{ color: "#fff" }}>Amazon</span>
+                    </div>
+                    <span className="modal-retailer-desc">
+                      Uses custom class matching for cards. Falls back to headless browsers and Gemini text-scraping when Amazon's bot-detection flags direct requests.
+                    </span>
+                  </div>
+                  <div className="modal-retailer-card">
+                    <div className="modal-retailer-head">
+                      <span className="retailer-name" style={{ color: "#fff" }}>Best Buy</span>
+                    </div>
+                    <span className="modal-retailer-desc">
+                      Dedicated electronics merchant. Supports country redirection detection to quickly skip international blocks and fall back to Firecrawl or LLMs.
+                    </span>
+                  </div>
+                  <div className="modal-retailer-card">
+                    <div className="modal-retailer-head">
+                      <span className="retailer-name" style={{ color: "#fff" }}>Walmart</span>
+                    </div>
+                    <span className="modal-retailer-desc">
+                      Scraped efficiently by parsing the embedded <code>__NEXT_DATA__</code> JSON object directly from Walmart's Server-Side Rendered HTML script tag.
+                    </span>
+                  </div>
+                  <div className="modal-retailer-card">
+                    <div className="modal-retailer-head">
+                      <span className="retailer-name" style={{ color: "#fff" }}>Newegg</span>
+                    </div>
+                    <span className="modal-retailer-desc">
+                      Tech and PC parts merchant. Uses custom parser logic to combine separate dollar and cents tags into unified floating-point prices.
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

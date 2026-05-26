@@ -102,7 +102,7 @@ async def scrape_site(
             if is_valid_result(result):
                 result.method = method_name
                 result.status = ScrapingStatus.SUCCESS
-                print(f"[{site_name}] ✓ Success with {method_name.value}")
+                print(f"[{site_name}] Success: {method_name.value}")
                 if progress:
                     await progress({
                         "type": "site_done",
@@ -112,7 +112,7 @@ async def scrape_site(
                 return result
             else:
                 last_error = "missing title or price"
-                print(f"[{site_name}] ✗ {method_name.value}: {last_error}")
+                print(f"[{site_name}] Failed: {method_name.value} ({last_error})")
                 if progress:
                     await progress({
                         "type": "method_failed",
@@ -123,7 +123,7 @@ async def scrape_site(
 
         except asyncio.TimeoutError:
             last_error = "timed out"
-            print(f"[{site_name}] ✗ {method_name.value}: timed out")
+            print(f"[{site_name}] Failed: {method_name.value} (timed out)")
             if progress:
                 await progress({
                     "type": "method_failed",
@@ -134,7 +134,7 @@ async def scrape_site(
 
         except Exception as e:
             last_error = str(e)
-            print(f"[{site_name}] ✗ {method_name.value}: {last_error}")
+            print(f"[{site_name}] Failed: {method_name.value} ({last_error})")
             if progress:
                 await progress({
                     "type": "method_failed",

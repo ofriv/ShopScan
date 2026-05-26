@@ -98,9 +98,6 @@ export default function ProductCard({
       <article className="card unavailable">
         <div className="card-head">
           <div className="retailer">
-            <div className={`retailer-logo ${retailer.cls}`} aria-hidden="true">
-              {retailer.initial}
-            </div>
             <div className="retailer-text">
               <span className="retailer-name">{retailer.display}</span>
               <span className="retailer-domain">{retailer.domain}</span>
@@ -153,9 +150,6 @@ export default function ProductCard({
       {/* Header: retailer logo + method badge */}
       <div className="card-head">
         <div className="retailer">
-          <div className={`retailer-logo ${retailer.cls}`} aria-hidden="true">
-            {retailer.initial}
-          </div>
           <div className="retailer-text">
             <span className="retailer-name">{retailer.display}</span>
             <span className="retailer-domain">{retailer.domain}</span>

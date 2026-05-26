@@ -7,7 +7,6 @@ export default function SkeletonCard() {
     <div className="skeleton">
       {/* Retailer row */}
       <div className="sk-row">
-        <div className="sk sk-circle" />
         <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
           <div className="sk sk-line" style={{ width: "55%" }} />
           <div className="sk sk-line" style={{ width: "35%", height: 8 }} />
