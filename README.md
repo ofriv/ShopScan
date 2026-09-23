@@ -1,30 +1,31 @@
-# Shopping Scraper
+# ShopScan
 
-A real-time product price scraper across multiple e-commerce websites, built with a **Next.js** frontend and a **FastAPI** backend.
+A real-time product price comparison tool. Type a product and ShopScan scrapes Amazon, Best Buy, Walmart, and Newegg in parallel, then shows which retailer has the best price. Built with a **Next.js** frontend and a **FastAPI** backend.
 
 ## Features
 
-- Search for any product and compare prices across:
-  - Amazon.com
-  - BestBuy.com
-  - Walmart.com
-  - Newegg.com
-- **4-method fallback pipeline** per site:
+- **Four retailers searched in parallel:** Amazon, Best Buy, Walmart, and Newegg.
+- **4-method fallback pipeline per site.** If one method fails or gets blocked, the next one takes over:
   1. Basic scraping (requests + BeautifulSoup)
-  2. Browser-based scraping (Playwright)
-  3. LLM-based extraction (Google Gemini)
-  4. Firecrawl API
-- Graceful failure handling — if a site fails, the rest still show results
-- Displays: product title, price, average rating, review count, status, and method used
+  2. Browser automation (Playwright), with CAPTCHA and geo-block detection and a pooled browser
+  3. LLM extraction (Google Gemini) from the page text
+  4. Firecrawl API with structured extraction
+- **Smart queries:** GPT-4o-mini validates the search and rewrites it into an optimized query for each retailer.
+- **Price sanity check:** an LLM flags prices that look wrong for the product.
+- **Live progress:** results stream to the browser over Server-Sent Events as each site finishes.
+- **Comparison UI:** best-price badge, price difference between retailers, ranking, and sort tabs.
+- **Suggestions:** recommends a complementary product, and clicking it runs a second search below the first.
+- **Graceful failure:** if a site fails, the other results still show, along with which method worked for each site.
 
 ## Project Structure
 
 ```
-Shopping-Scraper/
+ShopScan/
 ├── backend/
 │   ├── main.py              # FastAPI app & API routes
 │   ├── models.py            # Pydantic data models
 │   ├── pipeline.py          # Fallback scraping orchestrator
+│   ├── query_processor.py   # OpenAI query optimization, price check, suggestions
 │   └── scrapers/
 │       ├── basic.py         # requests + BeautifulSoup
 │       ├── browser.py       # Playwright
@@ -32,6 +33,12 @@ Shopping-Scraper/
 │       └── firecrawl.py     # Firecrawl API
 └── frontend/                # Next.js app
 ```
+
+## Tech Stack
+
+- **Frontend:** Next.js 16, React 19, TypeScript, Tailwind CSS
+- **Backend:** Python, FastAPI, Playwright, BeautifulSoup
+- **AI and APIs:** OpenAI GPT-4o-mini, Google Gemini, Firecrawl
 
 ## Setup
 
