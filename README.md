@@ -45,10 +45,11 @@ pip install -r requirements.txt
 playwright install chromium
 ```
 
-Create a `.env` file in `backend/`:
+Copy `backend/.env.example` to `backend/.env` and fill in your keys:
 ```
 GEMINI_API_KEY=your_gemini_key_here
 FIRECRAWL_API_KEY=your_firecrawl_key_here
+OPENAI_API_KEY=your_openai_key_here
 ```
 
 Run the backend:
